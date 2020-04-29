@@ -113,6 +113,15 @@ BUILD_FOR_TESTING = False
 # Other valid values are 'ON' and 'OFF'
 ENABLE_LLVM_ASSERTIONS = 'auto'
 
+# Emsdk supports one local forked repository source for Emscripten tools. If in use,
+# the following fields specify the URLs and branch/tag names to use for the forks.
+LLVM_FORK_URL = None
+
+LLVM_CLANG_FORK_URL = None
+
+EMSCRIPTEN_FORK_URL = None
+
+BINARYEN_FORK_URL = None
 
 def os_name():
   if WINDOWS:
@@ -148,6 +157,26 @@ def to_unix_path(p):
 def emsdk_path():
   return to_unix_path(os.path.dirname(os.path.realpath(__file__)))
 
+# Parses https://github.com/emscripten-core/emscripten/tree/d6aced8 to d6aced8
+def parse_github_refspec(url):
+  if not url:
+    return ''
+
+  if '/tree/' in url:
+    return url.split('/tree/')[1]
+  else:
+    return 'master' # Assume the default branch is master in the absence of a refspec
+
+# Parses https://github.com/emscripten-core/emscripten/tree/d6aced8 to https://github.com/emscripten-core/emscripten
+def parse_github_url(url):
+  if not url:
+    return ''
+
+  # N.b. This won't work if your GitHub username is 'tree'. Although looks like that username is unclaimed. :/
+  if '/tree/' in url:
+    return url.split('/tree/')[0]
+  else:
+    return url
 
 emscripten_config_directory = os.path.expanduser("~/")
 # If .emscripten exists, we are configuring as embedded inside the emsdk directory.
@@ -465,11 +494,11 @@ def num_files_in_directory(path):
   return len([name for name in os.listdir(path) if os.path.exists(os.path.join(path, name))])
 
 
-def run(cmd, cwd=None):
+def run(cmd, cwd=None, quiet=False):
   debug_print('run(cmd=' + str(cmd) + ', cwd=' + str(cwd) + ')')
   process = subprocess.Popen(cmd, cwd=cwd, env=os.environ.copy())
   process.communicate()
-  if process.returncode != 0:
+  if process.returncode != 0 and not quiet:
     print(str(cmd) + ' failed with error code ' + str(process.returncode) + '!')
   return process.returncode
 
@@ -762,33 +791,37 @@ def git_clone(url, dstpath):
   git_clone_args = []
   if GIT_CLONE_SHALLOW:
     git_clone_args += ['--depth', '1']
+  print('Cloning from ' + url + '...')
   return run([GIT(), 'clone'] + git_clone_args + [url, dstpath]) == 0
 
 
-def git_checkout_and_pull(repo_path, branch):
-  debug_print('git_checkout_and_pull(repo_path=' + repo_path + ', branch=' + branch + ')')
+def git_checkout_and_pull(repo_path, branch_or_tag):
+  debug_print('git_checkout_and_pull(repo_path=' + repo_path + ', branch/tag=' + branch_or_tag + ')')
   ret = run([GIT(), 'fetch', 'origin'], repo_path)
   if ret != 0:
     return False
   try:
-    print("Fetching latest changes to the branch '" + branch + "' for '" + repo_path + "'...")
+    print("Fetching latest changes to the branch/tag '" + branch_or_tag + "' for '" + repo_path + "'...")
     ret = run([GIT(), 'fetch', 'origin'], repo_path)
     if ret != 0:
       return False
-    #  run([GIT, 'checkout', '-b', branch, '--track', 'origin/'+branch], repo_path)
     # this line assumes that the user has not gone and manually messed with the
     # repo and added new remotes to ambiguate the checkout.
-    ret = run([GIT(), 'checkout', '--quiet', branch], repo_path)
+    ret = run([GIT(), 'checkout', '--quiet', branch_or_tag], repo_path)
     if ret != 0:
       return False
-    # this line assumes that the user has not gone and made local changes to the repo
-    ret = run([GIT(), 'merge', '--ff-only', 'origin/' + branch], repo_path)
+    # Test if branch_or_tag is a branch, or if it is a tag that needs to be updated
+    target_is_tag = run([GIT(), 'symbolic-ref', '-q', 'HEAD'], repo_path, quiet=True)
+    if not target_is_tag:
+      # update branch to latest (not needed for tags)
+      # this line assumes that the user has not gone and made local changes to the repo
+      ret = run([GIT(), 'merge', '--ff-only', 'origin/' + branch_or_tag], repo_path)
     if ret != 0:
       return False
   except:
     print('git operation failed!')
     return False
-  print("Successfully updated and checked out branch '" + branch + "' on repository '" + repo_path + "'")
+  print("Successfully updated and checked out branch/tag '" + branch_or_tag + "' on repository '" + repo_path + "'")
   print("Current repository version: " + git_repo_version(repo_path))
   return True
 
@@ -824,8 +857,8 @@ def llvm_build_dir(tool):
 
   bitness_suffix = '_32' if tool.bitness == 32 else '_64'
 
-  if hasattr(tool, 'git_branch'):
-    build_dir = 'build_' + tool.git_branch.replace(os.sep, '-') + generator_suffix + bitness_suffix
+  if tool.git_refspec():
+    build_dir = 'build_' + tool.git_refspec().replace(os.sep, '-') + generator_suffix + bitness_suffix
   else:
     build_dir = 'build_' + tool.version + generator_suffix + bitness_suffix
   return build_dir
@@ -1031,18 +1064,13 @@ def build_llvm_fastcomp(tool):
   fastcomp_root = tool.installation_path()
   fastcomp_src_root = os.path.join(fastcomp_root, 'src')
   # Does this tool want to be git cloned from github?
-  if hasattr(tool, 'git_branch'):
-    success = git_clone_checkout_and_pull(tool.download_url(), fastcomp_src_root, tool.git_branch)
+  if tool.git_refspec():
+    success = git_clone_checkout_and_pull(tool.download_url(), fastcomp_src_root, tool.git_refspec())
     if not success:
       return False
     if hasattr(tool, 'clang_url'):
       clang_root = os.path.join(fastcomp_src_root, 'tools/clang')
-      success = git_clone_checkout_and_pull(tool.clang_url, clang_root, tool.git_branch)
-      if not success:
-        return False
-    if hasattr(tool, 'lld_url'):
-      lld_root = os.path.join(fastcomp_src_root, 'tools/lld')
-      success = git_clone_checkout_and_pull(tool.lld_url, lld_root, tool.git_branch)
+      success = git_clone_checkout_and_pull(tool.expand_vars(tool.clang_url), clang_root, tool.git_refspec())
       if not success:
         return False
   else:
@@ -1116,7 +1144,7 @@ def build_llvm_monorepo(tool):
   debug_print('build_llvm_monorepo(' + str(tool) + ')')
   llvm_root = tool.installation_path()
   llvm_src_root = os.path.join(llvm_root, 'src')
-  success = git_clone_checkout_and_pull(tool.download_url(), llvm_src_root, tool.git_branch)
+  success = git_clone_checkout_and_pull(tool.download_url(), llvm_src_root, tool.git_refspec())
   if not success:
     return False
 
@@ -1535,7 +1563,9 @@ class Tool(object):
       setattr(self, key, value)
 
     # Cache the name ID of this Tool (these are read very often)
-    self.name = self.id + '-' + self.version
+    self.name = self.id
+    if len(self.version) > 0:
+      self.name += '-' + self.version
     if hasattr(self, 'bitness'):
       self.name += '-' + str(self.bitness) + 'bit'
 
@@ -1559,6 +1589,22 @@ class Tool(object):
       str = str.replace('%fastcomp_build_dir%', llvm_build_dir(self))
     if '%fastcomp_build_bin_dir%' in str:
       str = str.replace('%fastcomp_build_bin_dir%', fastcomp_build_bin_dir(self))
+    if '%forked_llvm_refspec%' in str:
+      str = str.replace('%forked_llvm_refspec%', parse_github_refspec(LLVM_FORK_URL))
+    if '%forked_llvm_url%' in str:
+      str = str.replace('%forked_llvm_url%', parse_github_url(LLVM_FORK_URL))
+    if '%forked_llvm_clang_refspec%' in str:
+      str = str.replace('%forked_llvm_clang_refspec%', parse_github_refspec(LLVM_CLANG_FORK_URL))
+    if '%forked_llvm_clang_url%' in str:
+      str = str.replace('%forked_llvm_clang_url%', parse_github_url(LLVM_CLANG_FORK_URL))
+    if '%forked_emscripten_refspec%' in str:
+      str = str.replace('%forked_emscripten_refspec%', parse_github_refspec(EMSCRIPTEN_FORK_URL))
+    if '%forked_emscripten_url%' in str:
+      str = str.replace('%forked_emscripten_url%', parse_github_url(EMSCRIPTEN_FORK_URL))
+    if '%forked_binaryen_refspec%' in str:
+      str = str.replace('%forked_binaryen_refspec%', parse_github_refspec(BINARYEN_FORK_URL))
+    if '%forked_binaryen_url%' in str:
+      str = str.replace('%forked_binaryen_url%', parse_github_url(BINARYEN_FORK_URL))
     return str
 
   # Return true if this tool requires building from source, and false if this is a precompiled tool.
@@ -1590,6 +1636,12 @@ class Tool(object):
     if hasattr(self, 'bitness') and (not hasattr(self, 'append_bitness') or self.append_bitness):
       p += '_' + str(self.bitness) + 'bit'
     return sdk_path(os.path.join(self.id, p))
+
+  def git_refspec(self):
+    if hasattr(self, 'git_branch'):
+      return self.expand_vars(self.git_branch)
+    else:
+      return None
 
   # Specifies the target directory this tool will be installed to.
   def installation_dir(self):
@@ -1778,15 +1830,15 @@ class Tool(object):
 
   def download_url(self):
     if WINDOWS and hasattr(self, 'windows_url'):
-      return self.windows_url
+      return self.expand_vars(self.windows_url)
     elif OSX and hasattr(self, 'osx_url'):
-      return self.osx_url
+      return self.expand_vars(self.osx_url)
     elif LINUX and hasattr(self, 'linux_url'):
-      return self.linux_url
+      return self.expand_vars(self.linux_url)
     elif UNIX and hasattr(self, 'unix_url'):
-      return self.unix_url
+      return self.expand_vars(self.unix_url)
     elif hasattr(self, 'url'):
-      return self.url
+      return self.expand_vars(self.url)
     else:
       return None
 
@@ -1842,12 +1894,15 @@ class Tool(object):
     print("Installing tool '" + str(self) + "'..")
     url = self.download_url()
 
+    if '%forked' in url:
+      raise Exception("Installing any of the 'forked-' variants of the tools requires passing the --forked-* cmdline options to specify the URL of the fork! (see 'emsdk help' for details)")
+
     if hasattr(self, 'custom_install_script') and self.custom_install_script == 'build_fastcomp':
       success = build_llvm_fastcomp(self)
     elif hasattr(self, 'custom_install_script') and self.custom_install_script == 'build_llvm_monorepo':
       success = build_llvm_monorepo(self)
-    elif hasattr(self, 'git_branch'):
-      success = git_clone_checkout_and_pull(url, self.installation_path(), self.git_branch)
+    elif self.git_refspec():
+      success = git_clone_checkout_and_pull(url, self.installation_path(), self.git_refspec())
     elif url.endswith(ARCHIVE_SUFFIXES):
       # TODO: explain the vs-tool special-casing
       download_even_if_exists = (self.id == 'vs-tool')
@@ -2117,7 +2172,7 @@ def is_emsdk_sourced_from_github():
 
 def update_emsdk():
   if is_emsdk_sourced_from_github():
-    print('You seem to have bootstrapped Emscripten SDK by cloning from GitHub. In this case, use "git pull" instead of "emsdk update" to update emsdk. (Not doing that automatically in case you have local changes)', file=sys.stderr)
+    print('You seem to have bootstrapped Emscripten SDK by from GitHub. In this case, use "git pull" instead of "emsdk update" to update emsdk. (Not doing that automatically in case you have local changes)', file=sys.stderr)
     print('Alternatively, use "emsdk update-tags" to refresh the latest list of tags from the different Git repositories.', file=sys.stderr)
     sys.exit(1)
   if not download_and_unzip(emsdk_zip_download_url, emsdk_path(), download_even_if_exists=True, clobber=False):
@@ -2654,7 +2709,7 @@ def error_on_missing_tool(name):
 
 
 def main():
-  global emscripten_config_directory, BUILD_FOR_TESTING, ENABLE_LLVM_ASSERTIONS, TTY_OUTPUT
+  global emscripten_config_directory, BUILD_FOR_TESTING, ENABLE_LLVM_ASSERTIONS, TTY_OUTPUT, LLVM_FORK_URL, LLVM_CLANG_FORK_URL, EMSCRIPTEN_FORK_URL, BINARYEN_FORK_URL
 
   if len(sys.argv) <= 1 or sys.argv[1] == 'help' or sys.argv[1] == '--help':
     if len(sys.argv) <= 1:
@@ -2735,6 +2790,25 @@ def main():
                                   in the environment where the build is invoked.
                                   See README.md for details.
 
+         --forked-emscripten-url: Specifies the git URL to use to
+                                  acquire a fork of Emscripten. Use format
+                                  https://github.com/<fork>/emscripten/tree/<refspec>
+                                  to customize the fork name and branch/tag/hash to clone.
+                                  Pair this when calling emsdk install forked-emscripten-64bit.
+
+               --forked-llvm-url: Specifies the git URL to use to acquire LLVM. Use format
+                                  https://github.com/<fork>/llvm-project/tree/<refspec>
+                                  to choose the LLVM target URL and refspec.
+
+         --forked-llvm-clang-url: Specifies the git URL to use to acquire LLVM Clang (fastcomp only).
+                                  Use format
+                                  https://github.com/<fork>/emscripten-fastcomp-clang/tree/<refspec>
+                                  to choose the Fastcomp LLVM Clang target URL and refspec.
+
+           --forked-binaryen-url: Specifies the git URL to use to acquire Binaryen. Use format
+                                  https://github.com/<fork>/binaryen/tree/<refspec>
+                                  to choose the Binaryen target URL and refspec.
+
    emsdk uninstall <tool/sdk>   - Removes the given tool or SDK from disk.''')
 
     if WINDOWS:
@@ -2785,6 +2859,13 @@ def main():
     sys.argv = list(filter(lambda a: a != name, sys.argv))
     return len(sys.argv) != len(old_argv)
 
+  def extract_string_arg(name):
+    for i in range(len(sys.argv)):
+      if sys.argv[i] == name:
+        value = sys.argv[i+1]
+        sys.argv = sys.argv[:i] + sys.argv[i+2:]
+        return value
+
   arg_old = extract_bool_arg('--old')
   arg_uses = extract_bool_arg('--uses')
   arg_global = extract_bool_arg('--global')
@@ -2792,6 +2873,10 @@ def main():
   arg_notty = extract_bool_arg('--notty')
   if arg_notty:
     TTY_OUTPUT = False
+  LLVM_FORK_URL = extract_string_arg('--forked-llvm-url')
+  LLVM_CLANG_FORK_URL = extract_string_arg('--forked-llvm-clang-url')
+  EMSCRIPTEN_FORK_URL = extract_string_arg('--forked-emscripten-url')
+  BINARYEN_FORK_URL = extract_string_arg('--forked-binaryen-url')
 
   cmd = sys.argv[1]
 
