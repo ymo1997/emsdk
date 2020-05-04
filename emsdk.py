@@ -123,6 +123,7 @@ EMSCRIPTEN_FORK_URL = None
 
 BINARYEN_FORK_URL = None
 
+
 def os_name():
   if WINDOWS:
     return 'win'
@@ -157,6 +158,7 @@ def to_unix_path(p):
 def emsdk_path():
   return to_unix_path(os.path.dirname(os.path.realpath(__file__)))
 
+
 # Parses https://github.com/emscripten-core/emscripten/tree/d6aced8 to d6aced8
 def parse_github_refspec(url):
   if not url:
@@ -166,6 +168,7 @@ def parse_github_refspec(url):
     return url.split('/tree/')[1]
   else:
     return 'master' # Assume the default branch is master in the absence of a refspec
+
 
 # Parses https://github.com/emscripten-core/emscripten/tree/d6aced8 to https://github.com/emscripten-core/emscripten
 def parse_github_url(url):
@@ -177,6 +180,7 @@ def parse_github_url(url):
     return url.split('/tree/')[0]
   else:
     return url
+
 
 emscripten_config_directory = os.path.expanduser("~/")
 # If .emscripten exists, we are configuring as embedded inside the emsdk directory.
@@ -2862,8 +2866,8 @@ def main():
   def extract_string_arg(name):
     for i in range(len(sys.argv)):
       if sys.argv[i] == name:
-        value = sys.argv[i+1]
-        sys.argv = sys.argv[:i] + sys.argv[i+2:]
+        value = sys.argv[i + 1]
+        sys.argv = sys.argv[:i] + sys.argv[i + 2:]
         return value
 
   arg_old = extract_bool_arg('--old')
