@@ -1627,6 +1627,22 @@ class Tool(object):
 
     return False
 
+  # Return true if this tool perpetually needs recompilation, e.g. a git branch, that changes along time.
+  def moving_target(self):
+    if hasattr(self, 'moving_target'):
+      return bool(self['moving_target'])
+
+    if hasattr(self, 'uses'):
+      for tool_name in self.uses:
+        tool = find_tool(tool_name)
+        if not tool:
+          debug_print('Tool ' + str(self) + ' depends on ' + tool_name + ' which does not exist!')
+          continue
+        if tool.moving_target():
+          return True
+
+    return False
+
   # Specifies the target path where this tool will be installed to. This could
   # either be a directory or a filename (e.g. in case of node.js)
   def installation_path(self):
