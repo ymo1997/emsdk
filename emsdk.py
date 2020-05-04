@@ -1628,9 +1628,9 @@ class Tool(object):
     return False
 
   # Return true if this tool perpetually needs recompilation, e.g. a git branch, that changes along time.
-  def moving_target(self):
+  def is_moving_target(self):
     if hasattr(self, 'moving_target'):
-      return bool(self['moving_target'])
+      return bool(self.moving_target)
 
     if hasattr(self, 'uses'):
       for tool_name in self.uses:
@@ -1638,7 +1638,7 @@ class Tool(object):
         if not tool:
           debug_print('Tool ' + str(self) + ' depends on ' + tool_name + ' which does not exist!')
           continue
-        if tool.moving_target():
+        if tool.is_moving_target():
           return True
 
     return False
@@ -1905,7 +1905,7 @@ class Tool(object):
 
     version_id = self.name
     version_file_path = os.path.join(self.installation_path(), '.emsdk_version')
-    if os.path.isfile(version_file_path):
+    if os.path.isfile(version_file_path) and not self.is_moving_target():
       with open(version_file_path, 'r') as version_file:
         if version_id == version_file.read():
           print("Skipped installing " + self.name + ", already installed.")
