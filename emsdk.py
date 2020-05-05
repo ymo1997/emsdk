@@ -167,7 +167,7 @@ def parse_github_refspec(url):
   if '/tree/' in url:
     return url.split('/tree/')[1]
   else:
-    return 'master' # Assume the default branch is master in the absence of a refspec
+    return 'master'  # Assume the default branch is master in the absence of a refspec
 
 
 # Parses https://github.com/emscripten-core/emscripten/tree/d6aced8 to https://github.com/emscripten-core/emscripten
