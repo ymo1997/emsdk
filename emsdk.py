@@ -911,7 +911,7 @@ def build_env(generator):
       path = vswhere(16)
     else:
       path = vswhere(15)
-    build_env['VCTargetsPath'] = os.path.join(path, 'Common7\\IDE\\VC\\VCTargets')
+      build_env['VCTargetsPath'] = os.path.join(path, 'Common7\\IDE\\VC\\VCTargets')
 
     # CMake and VS2017 cl.exe needs to have mspdb140.dll et al. in its PATH.
     vc_bin_paths = [vs_filewhere(path, 'amd64', 'cl.exe'),
