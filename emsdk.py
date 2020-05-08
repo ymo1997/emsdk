@@ -166,6 +166,8 @@ def parse_github_refspec(url):
 
   if '/tree/' in url:
     return url.split('/tree/')[1]
+  elif '/commit/' in url:
+    return url.split('/commit/')[1]
   else:
     return 'master'  # Assume the default branch is master in the absence of a refspec
 
@@ -175,9 +177,11 @@ def parse_github_url(url):
   if not url:
     return ''
 
-  # N.b. This won't work if your GitHub username is 'tree'. Although looks like that username is unclaimed. :/
+  # N.b. This won't work if your GitHub username is 'tree' or 'commit'. Although looks like those usernames are unclaimed. :/
   if '/tree/' in url:
     return url.split('/tree/')[0]
+  if '/commit/' in url:
+    return url.split('/commit/')[0]
   else:
     return url
 
